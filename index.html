@@ -252,6 +252,7 @@
         let workerId;
         let lastPredictions = [];
         let ktpDetected = false;
+        let lastFocusedKtp = null;
         let skipUI = false; // Flag to skip UI drawing
         const MODEL_ID = "indonesia-id-card";
         const MODEL_VERSION = "1";
@@ -402,6 +403,9 @@
                     );
                 }
                 
+                // Store the current focused KTP for photo capture
+                lastFocusedKtp = focusedKtp;
+                
                 // Update instruction text based on detection status
                 if (focusedKtp && !ktpDetected) {
                     ktpDetected = true;
@@ -548,14 +552,65 @@
                 
                 // Wait for the next frame to render without UI
                 requestAnimationFrame(() => {
-                    // Capture the displayCanvas (now without UI)
-                    const dataUrl = displayCanvas.toDataURL('image/jpeg', 1.0);
+                    // Calculate the visible region of the video (center crop)
+                    const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
+                    const canvasRatio = displayCanvas.width / displayCanvas.height;
+                    let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
+                    
+                    if (videoRatio > canvasRatio) {
+                        srcWidth = viewfinder.videoHeight * canvasRatio;
+                        srcX = (viewfinder.videoWidth - srcWidth) / 2;
+                    } else {
+                        srcHeight = viewfinder.videoWidth / canvasRatio;
+                        srcY = (viewfinder.videoHeight - srcHeight) / 2;
+                    }
+                    
+                    // Calculate scaling factors
+                    const scaleX = displayCanvas.width / srcWidth;
+                    const scaleY = displayCanvas.height / srcHeight;
+                    
+                    let dataUrl;
+                    
+                    if (lastFocusedKtp) {
+                        // Calculate KTP position in display canvas coordinates
+                        const ktpX = (lastFocusedKtp.bbox.x - srcX) * scaleX;
+                        const ktpY = (lastFocusedKtp.bbox.y - srcY) * scaleY;
+                        const ktpWidth = lastFocusedKtp.bbox.width * scaleX;
+                        const ktpHeight = lastFocusedKtp.bbox.height * scaleY;
+                        
+                        // Add vertical padding (10% of KTP height)
+                        const padding = ktpHeight * 0.1;
+                        const cropY = Math.max(0, ktpY - padding);
+                        const cropHeight = Math.min(displayCanvas.height - cropY, ktpHeight + padding * 2);
+                        
+                        // Create a canvas for the cropped image
+                        const photoCanvas = document.createElement('canvas');
+                        const photoCtx = photoCanvas.getContext('2d');
+                        photoCanvas.width = displayCanvas.width;
+                        photoCanvas.height = cropHeight;
+                        
+                        // Draw the cropped region from the display canvas
+                        photoCtx.drawImage(
+                            displayCanvas,
+                            0, cropY, displayCanvas.width, cropHeight,
+                            0, 0, displayCanvas.width, cropHeight
+                        );
+                        
+                        // Get high quality JPEG
+                        dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
+                        
+                        console.log("Photo taken with vertical crop");
+                        console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
+                    } else {
+                        // If no KTP detected, capture the full displayCanvas
+                        dataUrl = displayCanvas.toDataURL('image/jpeg', 0.95);
+                        
+                        console.log("Full viewfinder photo taken");
+                        console.log("Photo dimensions:", displayCanvas.width + "x" + displayCanvas.height);
+                    }
                     
                     // Reset the flag to restore UI
                     skipUI = false;
-                    
-                    console.log("Photo taken from displayCanvas");
-                    console.log("Photo dimensions:", displayCanvas.width + "x" + displayCanvas.height);
                     
                     // Download the image
                     downloadImage(dataUrl, filename);
