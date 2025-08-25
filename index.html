@@ -253,7 +253,6 @@
         let lastPredictions = [];
         let ktpDetected = false;
         let lastFocusedKtp = null;
-        let imageCapture = null;
         const MODEL_ID = "indonesia-id-card";
         const MODEL_VERSION = "1";
         const MODEL_URL = "https://cdn.jsdelivr.net/gh/agusibrahim/live-ktp-detection@main/assets/models.json";
@@ -521,17 +520,6 @@
                     await navigator.mediaDevices.getUserMedia(constraints);
                 viewfinder.srcObject = currentStream;
                 
-                // Get the video track for ImageCapture API
-                const videoTrack = currentStream.getVideoTracks()[0];
-                
-                // Check if ImageCapture API is available
-                if ('ImageCapture' in window) {
-                    imageCapture = new ImageCapture(videoTrack);
-                    console.log("ImageCapture API available");
-                } else {
-                    console.log("ImageCapture API not available, falling back to canvas method");
-                }
-                
                 await viewfinder.play();
                 
                 // Log the actual video resolution
@@ -548,7 +536,7 @@
                 facingMode === "environment" ? "user" : "environment";
             startCamera();
         }
-        async function takePhoto() {
+        function takePhoto() {
             // Generate a random filename
             const filename = generateRandomFilename();
             let dataUrl = ""; // Initialize dataUrl
@@ -567,45 +555,23 @@
                     srcY = (viewfinder.videoHeight - srcHeight) / 2;
                 }
                 
-                if (imageCapture && lastFocusedKtp) {
-                    // Use ImageCapture API for highest quality
-                    console.log("Using ImageCapture API");
-                    
-                    // Get the full resolution photo
-                    const blob = await imageCapture.takePhoto({
-                        imageHeight: 2160, // Request maximum height
-                        imageWidth: 3840   // Request maximum width
-                    });
-                    
-                    // Create a bitmap from the blob
-                    const bitmap = await createImageBitmap(blob);
-                    
-                    // Calculate scaling factors for the high-res image
-                    const scaleX = bitmap.width / viewfinder.videoWidth;
-                    const scaleY = bitmap.height / viewfinder.videoHeight;
-                    
-                    // Calculate the visible region in the high-res image
-                    const visX = srcX * scaleX;
-                    const visY = srcY * scaleY;
-                    const visWidth = srcWidth * scaleX;
-                    const visHeight = srcHeight * scaleY;
-                    
-                    // Calculate the KTP position in the high-res image
-                    const ktpCenterX = lastFocusedKtp.bbox.x * scaleX;
-                    const ktpCenterY = lastFocusedKtp.bbox.y * scaleY;
+                // Calculate scaling factors
+                const scaleX = displayCanvas.width / srcWidth;
+                const scaleY = displayCanvas.height / srcHeight;
+                
+                if (lastFocusedKtp) {
+                    // Calculate KTP position in display canvas coordinates
+                    const ktpX = (lastFocusedKtp.bbox.x - srcX) * scaleX;
+                    const ktpY = (lastFocusedKtp.bbox.y - srcY) * scaleY;
                     const ktpWidth = lastFocusedKtp.bbox.width * scaleX;
                     const ktpHeight = lastFocusedKtp.bbox.height * scaleY;
                     
-                    // Calculate the KTP position relative to the visible region
-                    const ktpXInVis = ktpCenterX - visX;
-                    const ktpYInVis = ktpCenterY - visY;
-                    
-                    // Add padding (15% for better framing)
-                    const padding = 0.15;
-                    const cropX = Math.max(0, ktpXInVis - ktpWidth * padding);
-                    const cropY = Math.max(0, ktpYInVis - ktpHeight * padding);
-                    const cropWidth = Math.min(visWidth - cropX, ktpWidth * (1 + 2*padding));
-                    const cropHeight = Math.min(visHeight - cropY, ktpHeight * (1 + 2*padding));
+                    // Add padding (20% for better framing)
+                    const padding = 0.2;
+                    const cropX = Math.max(0, ktpX - ktpWidth * padding);
+                    const cropY = Math.max(0, ktpY - ktpHeight * padding);
+                    const cropWidth = Math.min(displayCanvas.width - cropX, ktpWidth * (1 + 2*padding));
+                    const cropHeight = Math.min(displayCanvas.height - cropY, ktpHeight * (1 + 2*padding));
                     
                     // Create a canvas for the cropped image
                     const photoCanvas = document.createElement('canvas');
@@ -613,85 +579,24 @@
                     photoCanvas.width = cropWidth;
                     photoCanvas.height = cropHeight;
                     
-                    // Draw the cropped region from the high-res image
+                    // Draw the cropped region from the display canvas
                     photoCtx.drawImage(
-                        bitmap,
-                        visX + cropX, visY + cropY, cropWidth, cropHeight,
+                        displayCanvas,
+                        cropX, cropY, cropWidth, cropHeight,
                         0, 0, cropWidth, cropHeight
                     );
                     
                     // Get high quality JPEG
                     dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
                     
-                    console.log("Photo taken with ImageCapture API");
+                    console.log("Photo taken with cropped method");
                     console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
                 } else {
-                    // Fallback to canvas method
-                    console.log("Using canvas fallback method");
+                    // If no KTP detected, capture the entire viewfinder
+                    dataUrl = displayCanvas.toDataURL('image/jpeg', 0.95);
                     
-                    // Create a temporary canvas at full video resolution
-                    const tempCanvas = document.createElement('canvas');
-                    const tempCtx = tempCanvas.getContext('2d');
-                    tempCanvas.width = viewfinder.videoWidth;
-                    tempCanvas.height = viewfinder.videoHeight;
-                    
-                    // Draw the current video frame
-                    tempCtx.drawImage(viewfinder, 0, 0, tempCanvas.width, tempCanvas.height);
-                    
-                    if (lastFocusedKtp) {
-                        // Calculate the KTP position in the video frame
-                        const ktpCenterX = lastFocusedKtp.bbox.x;
-                        const ktpCenterY = lastFocusedKtp.bbox.y;
-                        const ktpWidth = lastFocusedKtp.bbox.width;
-                        const ktpHeight = lastFocusedKtp.bbox.height;
-                        
-                        // Calculate the KTP position relative to the visible region
-                        const ktpXInVis = ktpCenterX - srcX;
-                        const ktpYInVis = ktpCenterY - srcY;
-                        
-                        // Add padding (15% for better framing)
-                        const padding = 0.15;
-                        const cropX = Math.max(0, ktpXInVis - ktpWidth * padding);
-                        const cropY = Math.max(0, ktpYInVis - ktpHeight * padding);
-                        const cropWidth = Math.min(srcWidth - cropX, ktpWidth * (1 + 2*padding));
-                        const cropHeight = Math.min(srcHeight - cropY, ktpHeight * (1 + 2*padding));
-                        
-                        // Create a canvas for the cropped image
-                        const photoCanvas = document.createElement('canvas');
-                        const photoCtx = photoCanvas.getContext('2d');
-                        photoCanvas.width = cropWidth;
-                        photoCanvas.height = cropHeight;
-                        
-                        // Draw the cropped region from the temp canvas
-                        photoCtx.drawImage(
-                            tempCanvas,
-                            srcX + cropX, srcY + cropY, cropWidth, cropHeight,
-                            0, 0, cropWidth, cropHeight
-                        );
-                        
-                        // Get high quality JPEG
-                        dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
-                        
-                        console.log("Photo taken with canvas method");
-                        console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
-                    } else {
-                        // If no KTP detected, capture the entire visible region
-                        const photoCanvas = document.createElement('canvas');
-                        const photoCtx = photoCanvas.getContext('2d');
-                        photoCanvas.width = srcWidth;
-                        photoCanvas.height = srcHeight;
-                        
-                        photoCtx.drawImage(
-                            tempCanvas,
-                            srcX, srcY, srcWidth, srcHeight,
-                            0, 0, srcWidth, srcHeight
-                        );
-                        
-                        dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
-                        
-                        console.log("Full region photo taken with canvas method");
-                        console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
-                    }
+                    console.log("Full viewfinder photo taken");
+                    console.log("Photo dimensions:", displayCanvas.width + "x" + displayCanvas.height);
                 }
                 
                 // Download the image
