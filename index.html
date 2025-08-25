@@ -508,7 +508,7 @@
                 audio: false,
                 video: {
                     facingMode,
-                    width: { ideal: 1920 }, // Increased resolution for better photo quality
+                    width: { ideal: 1920 }, // HD resolution
                     height: { ideal: 1080 },
                 },
             };
@@ -531,44 +531,73 @@
             // Generate a random filename
             const filename = generateRandomFilename();
             
-            // Create a high-resolution canvas for capturing the photo
-            const photoCanvas = document.createElement('canvas');
-            const photoCtx = photoCanvas.getContext('2d');
+            // Calculate the visible region of the video (center crop)
+            const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
+            const canvasRatio = displayCanvas.width / displayCanvas.height;
+            let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
+            
+            if (videoRatio > canvasRatio) {
+                srcWidth = viewfinder.videoHeight * canvasRatio;
+                srcX = (viewfinder.videoWidth - srcWidth) / 2;
+            } else {
+                srcHeight = viewfinder.videoWidth / canvasRatio;
+                srcY = (viewfinder.videoHeight - srcHeight) / 2;
+            }
+            
+            // Create a canvas for the visible region at full resolution
+            const visibleCanvas = document.createElement('canvas');
+            const visibleCtx = visibleCanvas.getContext('2d');
+            visibleCanvas.width = srcWidth;
+            visibleCanvas.height = srcHeight;
+            
+            // Draw the visible region from the video
+            visibleCtx.drawImage(
+                viewfinder,
+                srcX, srcY, srcWidth, srcHeight,
+                0, 0, srcWidth, srcHeight
+            );
             
             // If we have a detected KTP, crop to that region
             if (lastFocusedKtp) {
-                // Calculate the crop region with padding
-                const padding = 0.05; // 5% padding
-                const cropX = Math.max(0, lastFocusedKtp.bbox.x - lastFocusedKtp.bbox.width/2 - lastFocusedKtp.bbox.width * padding);
-                const cropY = Math.max(0, lastFocusedKtp.bbox.y - lastFocusedKtp.bbox.height/2 - lastFocusedKtp.bbox.height * padding);
-                const cropWidth = Math.min(viewfinder.videoWidth - cropX, lastFocusedKtp.bbox.width * (1 + 2*padding));
-                const cropHeight = Math.min(viewfinder.videoHeight - cropY, lastFocusedKtp.bbox.height * (1 + 2*padding));
+                // Calculate the KTP position relative to the visible region
+                const ktpXInVisible = lastFocusedKtp.bbox.x - srcX;
+                const ktpYInVisible = lastFocusedKtp.bbox.y - srcY;
                 
-                // Set canvas size to the crop region
+                // Calculate crop region with padding
+                const padding = 0.05; // 5% padding
+                const cropX = Math.max(0, ktpXInVisible - lastFocusedKtp.bbox.width/2 - lastFocusedKtp.bbox.width * padding);
+                const cropY = Math.max(0, ktpYInVisible - lastFocusedKtp.bbox.height/2 - lastFocusedKtp.bbox.height * padding);
+                const cropWidth = Math.min(visibleCanvas.width - cropX, lastFocusedKtp.bbox.width * (1 + 2*padding));
+                const cropHeight = Math.min(visibleCanvas.height - cropY, lastFocusedKtp.bbox.height * (1 + 2*padding));
+                
+                // Create a final canvas for the KTP crop
+                const photoCanvas = document.createElement('canvas');
+                const photoCtx = photoCanvas.getContext('2d');
                 photoCanvas.width = cropWidth;
                 photoCanvas.height = cropHeight;
                 
-                // Draw the cropped region from the video
+                // Draw the cropped KTP from the visible canvas
                 photoCtx.drawImage(
-                    viewfinder,
+                    visibleCanvas,
                     cropX, cropY, cropWidth, cropHeight,
                     0, 0, cropWidth, cropHeight
                 );
+                
+                // Get the image data with high quality
+                const dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
+                
+                console.log("Photo taken and saved as:", filename);
+                console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
             } else {
-                // If no KTP detected, capture the full frame
-                photoCanvas.width = viewfinder.videoWidth;
-                photoCanvas.height = viewfinder.videoHeight;
-                photoCtx.drawImage(viewfinder, 0, 0, photoCanvas.width, photoCanvas.height);
+                // If no KTP detected, use the entire visible region
+                const dataUrl = visibleCanvas.toDataURL('image/jpeg', 0.95);
+                
+                console.log("Photo taken and saved as:", filename);
+                console.log("Photo dimensions:", visibleCanvas.width + "x" + visibleCanvas.height);
             }
-            
-            // Get the image data with high quality
-            const dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
             
             // Download the image
             downloadImage(dataUrl, filename);
-            
-            console.log("Photo taken and saved as:", filename);
-            console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
             
             // Flash effect
             flashOverlay.classList.add("flash");
