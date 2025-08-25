@@ -566,7 +566,7 @@
                 );
                 
                 // Get the image data with high quality
-                const dataUrl = tempCanvas.toDataURL('image/jpeg', 0.95);
+                const dataUrl = displayCanvas.toDataURL('image/jpeg', 0.95);
                 
                 console.log("Photo taken - clean viewfinder capture");
                 console.log("Photo dimensions:", tempCanvas.width + "x" + tempCanvas.height);
