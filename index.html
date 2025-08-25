@@ -253,6 +253,7 @@
         let lastPredictions = [];
         let ktpDetected = false;
         let lastFocusedKtp = null;
+        let imageCapture = null;
         const MODEL_ID = "indonesia-id-card";
         const MODEL_VERSION = "1";
         const MODEL_URL = "https://cdn.jsdelivr.net/gh/agusibrahim/live-ktp-detection@main/assets/models.json";
@@ -508,15 +509,35 @@
                 audio: false,
                 video: {
                     facingMode,
-                    width: { ideal: 1920 }, // HD resolution
-                    height: { ideal: 1080 },
+                    // Request the highest possible resolution
+                    width: { min: 1280, ideal: 1920, max: 4096 },
+                    height: { min: 720, ideal: 1080, max: 2160 },
+                    // Request high frame rate for better quality
+                    frameRate: { ideal: 30 }
                 },
             };
             try {
                 currentStream =
                     await navigator.mediaDevices.getUserMedia(constraints);
                 viewfinder.srcObject = currentStream;
+                
+                // Get the video track for ImageCapture API
+                const videoTrack = currentStream.getVideoTracks()[0];
+                
+                // Check if ImageCapture API is available
+                if ('ImageCapture' in window) {
+                    imageCapture = new ImageCapture(videoTrack);
+                    console.log("ImageCapture API available");
+                } else {
+                    console.log("ImageCapture API not available, falling back to canvas method");
+                }
+                
                 await viewfinder.play();
+                
+                // Log the actual video resolution
+                viewfinder.onloadedmetadata = () => {
+                    console.log(`Actual video resolution: ${viewfinder.videoWidth}x${viewfinder.videoHeight}`);
+                };
             } catch (err) {
                 console.error("Error accessing camera: ", err);
                 loader.innerHTML = "<div>Tidak dapat mengakses kamera.</div>";
@@ -527,95 +548,186 @@
                 facingMode === "environment" ? "user" : "environment";
             startCamera();
         }
-        function takePhoto() {
+        async function takePhoto() {
             // Generate a random filename
             const filename = generateRandomFilename();
             
-            // Calculate the visible region of the video (center crop)
-            const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
-            const canvasRatio = displayCanvas.width / displayCanvas.height;
-            let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
-            
-            if (videoRatio > canvasRatio) {
-                srcWidth = viewfinder.videoHeight * canvasRatio;
-                srcX = (viewfinder.videoWidth - srcWidth) / 2;
-            } else {
-                srcHeight = viewfinder.videoWidth / canvasRatio;
-                srcY = (viewfinder.videoHeight - srcHeight) / 2;
+            try {
+                let dataUrl;
+                
+                if (imageCapture && lastFocusedKtp) {
+                    // Use ImageCapture API for highest quality
+                    console.log("Using ImageCapture API");
+                    
+                    // Get the full resolution photo
+                    const blob = await imageCapture.takePhoto({
+                        imageHeight: 2160, // Request maximum height
+                        imageWidth: 3840   // Request maximum width
+                    });
+                    
+                    // Create a bitmap from the blob
+                    const bitmap = await createImageBitmap(blob);
+                    
+                    // Calculate the visible region of the video (center crop)
+                    const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
+                    const canvasRatio = displayCanvas.width / displayCanvas.height;
+                    let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
+                    
+                    if (videoRatio > canvasRatio) {
+                        srcWidth = viewfinder.videoHeight * canvasRatio;
+                        srcX = (viewfinder.videoWidth - srcWidth) / 2;
+                    } else {
+                        srcHeight = viewfinder.videoWidth / canvasRatio;
+                        srcY = (viewfinder.videoHeight - srcHeight) / 2;
+                    }
+                    
+                    // Calculate scaling factors for the high-res image
+                    const scaleX = bitmap.width / viewfinder.videoWidth;
+                    const scaleY = bitmap.height / viewfinder.videoHeight;
+                    
+                    // Calculate the KTP position in the high-res image
+                    const ktpX = (lastFocusedKtp.bbox.x - srcX) * scaleX;
+                    const ktpY = (lastFocusedKtp.bbox.y - srcY) * scaleY;
+                    const ktpWidth = lastFocusedKtp.bbox.width * scaleX;
+                    const ktpHeight = lastFocusedKtp.bbox.height * scaleY;
+                    
+                    // Add padding
+                    const padding = 0.1; // 10% padding for better quality
+                    const cropX = Math.max(0, ktpX - ktpWidth * padding);
+                    const cropY = Math.max(0, ktpY - ktpHeight * padding);
+                    const cropWidth = Math.min(bitmap.width - cropX, ktpWidth * (1 + 2*padding));
+                    const cropHeight = Math.min(bitmap.height - cropY, ktpHeight * (1 + 2*padding));
+                    
+                    // Create a canvas for the cropped image
+                    const photoCanvas = document.createElement('canvas');
+                    const photoCtx = photoCanvas.getContext('2d');
+                    photoCanvas.width = cropWidth;
+                    photoCanvas.height = cropHeight;
+                    
+                    // Draw the cropped region
+                    photoCtx.drawImage(
+                        bitmap,
+                        cropX, cropY, cropWidth, cropHeight,
+                        0, 0, cropWidth, cropHeight
+                    );
+                    
+                    // Get high quality JPEG
+                    dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
+                    
+                    console.log("Photo taken with ImageCapture API");
+                    console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
+                } else {
+                    // Fallback to canvas method
+                    console.log("Using canvas fallback method");
+                    
+                    // Create a temporary canvas at full video resolution
+                    const tempCanvas = document.createElement('canvas');
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCanvas.width = viewfinder.videoWidth;
+                    tempCanvas.height = viewfinder.videoHeight;
+                    
+                    // Draw the current video frame
+                    tempCtx.drawImage(viewfinder, 0, 0, tempCanvas.width, tempCanvas.height);
+                    
+                    // Calculate the visible region of the video (center crop)
+                    const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
+                    const canvasRatio = displayCanvas.width / displayCanvas.height;
+                    let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
+                    
+                    if (videoRatio > canvasRatio) {
+                        srcWidth = viewfinder.videoHeight * canvasRatio;
+                        srcX = (viewfinder.videoWidth - srcWidth) / 2;
+                    } else {
+                        srcHeight = viewfinder.videoWidth / canvasRatio;
+                        srcY = (viewfinder.videoHeight - srcHeight) / 2;
+                    }
+                    
+                    if (lastFocusedKtp) {
+                        // Calculate the KTP position in the video frame
+                        const ktpX = lastFocusedKtp.bbox.x - srcX;
+                        const ktpY = lastFocusedKtp.bbox.y - srcY;
+                        const ktpWidth = lastFocusedKtp.bbox.width;
+                        const ktpHeight = lastFocusedKtp.bbox.height;
+                        
+                        // Add padding
+                        const padding = 0.1; // 10% padding
+                        const cropX = Math.max(0, ktpX - ktpWidth * padding);
+                        const cropY = Math.max(0, ktpY - ktpHeight * padding);
+                        const cropWidth = Math.min(srcWidth - cropX, ktpWidth * (1 + 2*padding));
+                        const cropHeight = Math.min(srcHeight - cropY, ktpHeight * (1 + 2*padding));
+                        
+                        // Create a canvas for the cropped image
+                        const photoCanvas = document.createElement('canvas');
+                        const photoCtx = photoCanvas.getContext('2d');
+                        photoCanvas.width = cropWidth;
+                        photoCanvas.height = cropHeight;
+                        
+                        // Draw the cropped region from the temp canvas
+                        photoCtx.drawImage(
+                            tempCanvas,
+                            cropX + srcX, cropY + srcY, cropWidth, cropHeight,
+                            0, 0, cropWidth, cropHeight
+                        );
+                        
+                        // Get high quality JPEG
+                        dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
+                        
+                        console.log("Photo taken with canvas method");
+                        console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
+                    } else {
+                        // If no KTP detected, capture the entire visible region
+                        const photoCanvas = document.createElement('canvas');
+                        const photoCtx = photoCanvas.getContext('2d');
+                        photoCanvas.width = srcWidth;
+                        photoCanvas.height = srcHeight;
+                        
+                        photoCtx.drawImage(
+                            tempCanvas,
+                            srcX, srcY, srcWidth, srcHeight,
+                            0, 0, srcWidth, srcHeight
+                        );
+                        
+                        dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
+                        
+                        console.log("Full region photo taken with canvas method");
+                        console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
+                    }
+                }
+                
+                // Download the image
+                downloadImage(dataUrl, filename);
+                
+                console.log("Photo saved as:", filename);
+                
+                // Flash effect
+                flashOverlay.classList.add("flash");
+                setTimeout(() => flashOverlay.classList.remove("flash"), 300);
+                
+                // Show save notification
+                saveNotification.classList.add("show");
+                setTimeout(() => {
+                    saveNotification.classList.remove("show");
+                }, 3000);
+                
+                // Update instruction text temporarily
+                instructionsText.textContent = "Foto berhasil disimpan!";
+                setTimeout(() => {
+                    instructionsText.textContent = ktpDetected ? 
+                        "KTP terdeteksi - Tetap stabil untuk hasil terbaik" : 
+                        "Deteksi otomatis KTP - Tahan kamera stabil";
+                }, 2000);
+                
+            } catch (error) {
+                console.error("Error taking photo:", error);
+                
+                // Show error notification
+                saveNotification.textContent = "Gagal mengambil foto";
+                saveNotification.classList.add("show");
+                setTimeout(() => {
+                    saveNotification.classList.remove("show");
+                    saveNotification.textContent = "Foto berhasil disimpan!";
+                }, 3000);
             }
-            
-            // Create a canvas for the visible region at full resolution
-            const visibleCanvas = document.createElement('canvas');
-            const visibleCtx = visibleCanvas.getContext('2d');
-            visibleCanvas.width = srcWidth;
-            visibleCanvas.height = srcHeight;
-            
-            // Draw the visible region from the video
-            visibleCtx.drawImage(
-                viewfinder,
-                srcX, srcY, srcWidth, srcHeight,
-                0, 0, srcWidth, srcHeight
-            );
-            
-            // If we have a detected KTP, crop to that region
-            if (lastFocusedKtp) {
-                // Calculate the KTP position relative to the visible region
-                const ktpXInVisible = lastFocusedKtp.bbox.x - srcX;
-                const ktpYInVisible = lastFocusedKtp.bbox.y - srcY;
-                
-                // Calculate crop region with padding
-                const padding = 0.05; // 5% padding
-                const cropX = Math.max(0, ktpXInVisible - lastFocusedKtp.bbox.width/2 - lastFocusedKtp.bbox.width * padding);
-                const cropY = Math.max(0, ktpYInVisible - lastFocusedKtp.bbox.height/2 - lastFocusedKtp.bbox.height * padding);
-                const cropWidth = Math.min(visibleCanvas.width - cropX, lastFocusedKtp.bbox.width * (1 + 2*padding));
-                const cropHeight = Math.min(visibleCanvas.height - cropY, lastFocusedKtp.bbox.height * (1 + 2*padding));
-                
-                // Create a final canvas for the KTP crop
-                const photoCanvas = document.createElement('canvas');
-                const photoCtx = photoCanvas.getContext('2d');
-                photoCanvas.width = cropWidth;
-                photoCanvas.height = cropHeight;
-                
-                // Draw the cropped KTP from the visible canvas
-                photoCtx.drawImage(
-                    visibleCanvas,
-                    cropX, cropY, cropWidth, cropHeight,
-                    0, 0, cropWidth, cropHeight
-                );
-                
-                // Get the image data with high quality
-                const dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
-                
-                console.log("Photo taken and saved as:", filename);
-                console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
-            } else {
-                // If no KTP detected, use the entire visible region
-                const dataUrl = visibleCanvas.toDataURL('image/jpeg', 0.95);
-                
-                console.log("Photo taken and saved as:", filename);
-                console.log("Photo dimensions:", visibleCanvas.width + "x" + visibleCanvas.height);
-            }
-            
-            // Download the image
-            downloadImage(dataUrl, filename);
-            
-            // Flash effect
-            flashOverlay.classList.add("flash");
-            setTimeout(() => flashOverlay.classList.remove("flash"), 300);
-            
-            // Show save notification
-            saveNotification.classList.add("show");
-            setTimeout(() => {
-                saveNotification.classList.remove("show");
-            }, 3000);
-            
-            // Update instruction text temporarily
-            instructionsText.textContent = "Foto berhasil disimpan!";
-            setTimeout(() => {
-                instructionsText.textContent = ktpDetected ? 
-                    "KTP terdeteksi - Tetap stabil untuk hasil terbaik" : 
-                    "Deteksi otomatis KTP - Tahan kamera stabil";
-            }, 2000);
         }
         shutterButton.addEventListener("click", takePhoto);
         switchCameraButton.addEventListener("click", switchCamera);
