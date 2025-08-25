@@ -554,6 +554,19 @@
             let dataUrl = ""; // Initialize dataUrl
             
             try {
+                // Calculate the visible region of the video (center crop)
+                const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
+                const canvasRatio = displayCanvas.width / displayCanvas.height;
+                let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
+                
+                if (videoRatio > canvasRatio) {
+                    srcWidth = viewfinder.videoHeight * canvasRatio;
+                    srcX = (viewfinder.videoWidth - srcWidth) / 2;
+                } else {
+                    srcHeight = viewfinder.videoWidth / canvasRatio;
+                    srcY = (viewfinder.videoHeight - srcHeight) / 2;
+                }
+                
                 if (imageCapture && lastFocusedKtp) {
                     // Use ImageCapture API for highest quality
                     console.log("Using ImageCapture API");
@@ -567,35 +580,32 @@
                     // Create a bitmap from the blob
                     const bitmap = await createImageBitmap(blob);
                     
-                    // Calculate the visible region of the video (center crop)
-                    const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
-                    const canvasRatio = displayCanvas.width / displayCanvas.height;
-                    let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
-                    
-                    if (videoRatio > canvasRatio) {
-                        srcWidth = viewfinder.videoHeight * canvasRatio;
-                        srcX = (viewfinder.videoWidth - srcWidth) / 2;
-                    } else {
-                        srcHeight = viewfinder.videoWidth / canvasRatio;
-                        srcY = (viewfinder.videoHeight - srcHeight) / 2;
-                    }
-                    
                     // Calculate scaling factors for the high-res image
                     const scaleX = bitmap.width / viewfinder.videoWidth;
                     const scaleY = bitmap.height / viewfinder.videoHeight;
                     
+                    // Calculate the visible region in the high-res image
+                    const visX = srcX * scaleX;
+                    const visY = srcY * scaleY;
+                    const visWidth = srcWidth * scaleX;
+                    const visHeight = srcHeight * scaleY;
+                    
                     // Calculate the KTP position in the high-res image
-                    const ktpX = (lastFocusedKtp.bbox.x - srcX) * scaleX;
-                    const ktpY = (lastFocusedKtp.bbox.y - srcY) * scaleY;
+                    const ktpCenterX = lastFocusedKtp.bbox.x * scaleX;
+                    const ktpCenterY = lastFocusedKtp.bbox.y * scaleY;
                     const ktpWidth = lastFocusedKtp.bbox.width * scaleX;
                     const ktpHeight = lastFocusedKtp.bbox.height * scaleY;
                     
-                    // Add padding
-                    const padding = 0.1; // 10% padding for better quality
-                    const cropX = Math.max(0, ktpX - ktpWidth * padding);
-                    const cropY = Math.max(0, ktpY - ktpHeight * padding);
-                    const cropWidth = Math.min(bitmap.width - cropX, ktpWidth * (1 + 2*padding));
-                    const cropHeight = Math.min(bitmap.height - cropY, ktpHeight * (1 + 2*padding));
+                    // Calculate the KTP position relative to the visible region
+                    const ktpXInVis = ktpCenterX - visX;
+                    const ktpYInVis = ktpCenterY - visY;
+                    
+                    // Add padding (15% for better framing)
+                    const padding = 0.15;
+                    const cropX = Math.max(0, ktpXInVis - ktpWidth * padding);
+                    const cropY = Math.max(0, ktpYInVis - ktpHeight * padding);
+                    const cropWidth = Math.min(visWidth - cropX, ktpWidth * (1 + 2*padding));
+                    const cropHeight = Math.min(visHeight - cropY, ktpHeight * (1 + 2*padding));
                     
                     // Create a canvas for the cropped image
                     const photoCanvas = document.createElement('canvas');
@@ -603,10 +613,10 @@
                     photoCanvas.width = cropWidth;
                     photoCanvas.height = cropHeight;
                     
-                    // Draw the cropped region
+                    // Draw the cropped region from the high-res image
                     photoCtx.drawImage(
                         bitmap,
-                        cropX, cropY, cropWidth, cropHeight,
+                        visX + cropX, visY + cropY, cropWidth, cropHeight,
                         0, 0, cropWidth, cropHeight
                     );
                     
@@ -628,30 +638,21 @@
                     // Draw the current video frame
                     tempCtx.drawImage(viewfinder, 0, 0, tempCanvas.width, tempCanvas.height);
                     
-                    // Calculate the visible region of the video (center crop)
-                    const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
-                    const canvasRatio = displayCanvas.width / displayCanvas.height;
-                    let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
-                    
-                    if (videoRatio > canvasRatio) {
-                        srcWidth = viewfinder.videoHeight * canvasRatio;
-                        srcX = (viewfinder.videoWidth - srcWidth) / 2;
-                    } else {
-                        srcHeight = viewfinder.videoWidth / canvasRatio;
-                        srcY = (viewfinder.videoHeight - srcHeight) / 2;
-                    }
-                    
                     if (lastFocusedKtp) {
                         // Calculate the KTP position in the video frame
-                        const ktpX = lastFocusedKtp.bbox.x - srcX;
-                        const ktpY = lastFocusedKtp.bbox.y - srcY;
+                        const ktpCenterX = lastFocusedKtp.bbox.x;
+                        const ktpCenterY = lastFocusedKtp.bbox.y;
                         const ktpWidth = lastFocusedKtp.bbox.width;
                         const ktpHeight = lastFocusedKtp.bbox.height;
                         
-                        // Add padding
-                        const padding = 0.1; // 10% padding
-                        const cropX = Math.max(0, ktpX - ktpWidth * padding);
-                        const cropY = Math.max(0, ktpY - ktpHeight * padding);
+                        // Calculate the KTP position relative to the visible region
+                        const ktpXInVis = ktpCenterX - srcX;
+                        const ktpYInVis = ktpCenterY - srcY;
+                        
+                        // Add padding (15% for better framing)
+                        const padding = 0.15;
+                        const cropX = Math.max(0, ktpXInVis - ktpWidth * padding);
+                        const cropY = Math.max(0, ktpYInVis - ktpHeight * padding);
                         const cropWidth = Math.min(srcWidth - cropX, ktpWidth * (1 + 2*padding));
                         const cropHeight = Math.min(srcHeight - cropY, ktpHeight * (1 + 2*padding));
                         
@@ -664,7 +665,7 @@
                         // Draw the cropped region from the temp canvas
                         photoCtx.drawImage(
                             tempCanvas,
-                            cropX + srcX, cropY + srcY, cropWidth, cropHeight,
+                            srcX + cropX, srcY + cropY, cropWidth, cropHeight,
                             0, 0, cropWidth, cropHeight
                         );
                         
