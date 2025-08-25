@@ -551,10 +551,9 @@
         async function takePhoto() {
             // Generate a random filename
             const filename = generateRandomFilename();
+            let dataUrl = ""; // Initialize dataUrl
             
             try {
-                let dataUrl;
-                
                 if (imageCapture && lastFocusedKtp) {
                     // Use ImageCapture API for highest quality
                     console.log("Using ImageCapture API");
