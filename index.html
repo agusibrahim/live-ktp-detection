@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -132,6 +133,11 @@
             background-color: #f0f0f0;
         }
 
+        #shutter-button.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
         #switch-camera-button {
             position: absolute;
             right: 30px;
@@ -252,7 +258,7 @@
         let workerId;
         let lastPredictions = [];
         let ktpDetected = false;
-        let lastFocusedKtp = null;
+        let focusedKtp = null; // Made global for access in takePhoto
         let skipUI = false; // Flag to skip UI drawing
         const MODEL_ID = "indonesia-id-card";
         const MODEL_VERSION = "1";
@@ -393,7 +399,7 @@
                         validKtps.push(ktp);
                     }
                 });
-                let focusedKtp = null;
+                focusedKtp = null;
                 if (validKtps.length > 0) {
                     focusedKtp = validKtps.reduce((prev, current) =>
                         prev.bbox.width * prev.bbox.height >
@@ -403,16 +409,20 @@
                     );
                 }
                 
-                // Store the current focused KTP for photo capture
-                lastFocusedKtp = focusedKtp;
-                
-                // Update instruction text based on detection status
+                // Update instruction text and detection status
                 if (focusedKtp && !ktpDetected) {
                     ktpDetected = true;
                     instructionsText.textContent = "KTP terdeteksi - Tetap stabil untuk hasil terbaik";
                 } else if (!focusedKtp && ktpDetected) {
                     ktpDetected = false;
                     instructionsText.textContent = "Deteksi otomatis KTP - Tahan kamera stabil";
+                }
+                
+                // Update shutter button state
+                if (ktpDetected) {
+                    shutterButton.classList.remove("disabled");
+                } else {
+                    shutterButton.classList.add("disabled");
                 }
                 
                 if (focusedKtp) {
@@ -543,6 +553,11 @@
             startCamera();
         }
         function takePhoto() {
+            // Early return if no KTP detected (though button should be disabled)
+            if (!ktpDetected || !focusedKtp) {
+                return;
+            }
+            
             // Generate a random filename
             const filename = generateRandomFilename();
             
@@ -552,11 +567,13 @@
                 
                 // Wait for the next frame to render without UI
                 requestAnimationFrame(() => {
-                    // Calculate the visible region of the video (center crop)
+                    // Calculate scaling (reuse logic from renderLoop)
                     const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
                     const canvasRatio = displayCanvas.width / displayCanvas.height;
-                    let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
-                    
+                    let srcX = 0,
+                        srcY = 0,
+                        srcWidth = viewfinder.videoWidth,
+                        srcHeight = viewfinder.videoHeight;
                     if (videoRatio > canvasRatio) {
                         srcWidth = viewfinder.videoHeight * canvasRatio;
                         srcX = (viewfinder.videoWidth - srcWidth) / 2;
@@ -564,53 +581,42 @@
                         srcHeight = viewfinder.videoWidth / canvasRatio;
                         srcY = (viewfinder.videoHeight - srcHeight) / 2;
                     }
-                    
-                    // Calculate scaling factors
                     const scaleX = displayCanvas.width / srcWidth;
                     const scaleY = displayCanvas.height / srcHeight;
                     
-                    let dataUrl;
+                    // Calculate cropped area based on focusedKtp bbox
+                    const ktpSrcX = focusedKtp.bbox.x - focusedKtp.bbox.width / 2;
+                    const ktpSrcY = focusedKtp.bbox.y - focusedKtp.bbox.height / 2;
+                    const ktpSrcWidth = focusedKtp.bbox.width;
+                    const ktpSrcHeight = focusedKtp.bbox.height;
                     
-                    if (lastFocusedKtp) {
-                        // Calculate KTP position in display canvas coordinates
-                        const ktpX = (lastFocusedKtp.bbox.x - srcX) * scaleX;
-                        const ktpY = (lastFocusedKtp.bbox.y - srcY) * scaleY;
-                        const ktpWidth = lastFocusedKtp.bbox.width * scaleX;
-                        const ktpHeight = lastFocusedKtp.bbox.height * scaleY;
-                        
-                        // Add vertical padding (10% of KTP height)
-                        const padding = ktpHeight * 0.1;
-                        const cropY = Math.max(0, ktpY - padding);
-                        const cropHeight = Math.min(displayCanvas.height - cropY, ktpHeight + padding * 2);
-                        
-                        // Create a canvas for the cropped image
-                        const photoCanvas = document.createElement('canvas');
-                        const photoCtx = photoCanvas.getContext('2d');
-                        photoCanvas.width = displayCanvas.width;
-                        photoCanvas.height = cropHeight;
-                        
-                        // Draw the cropped region from the display canvas
-                        photoCtx.drawImage(
-                            displayCanvas,
-                            0, cropY, displayCanvas.width, cropHeight,
-                            0, 0, displayCanvas.width, cropHeight
-                        );
-                        
-                        // Get high quality JPEG
-                        dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
-                        
-                        console.log("Photo taken with vertical crop");
-                        console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
-                    } else {
-                        // If no KTP detected, capture the full displayCanvas
-                        dataUrl = displayCanvas.toDataURL('image/jpeg', 0.95);
-                        
-                        console.log("Full viewfinder photo taken");
-                        console.log("Photo dimensions:", displayCanvas.width + "x" + displayCanvas.height);
-                    }
+                    // Create a temporary canvas for cropping
+                    const cropCanvas = document.createElement('canvas');
+                    cropCanvas.width = ktpSrcWidth;
+                    cropCanvas.height = ktpSrcHeight;
+                    const cropCtx = cropCanvas.getContext('2d');
+                    
+                    // Draw the cropped portion from viewfinder (source video)
+                    cropCtx.drawImage(
+                        viewfinder,
+                        ktpSrcX,
+                        ktpSrcY,
+                        ktpSrcWidth,
+                        ktpSrcHeight,
+                        0,
+                        0,
+                        ktpSrcWidth,
+                        ktpSrcHeight
+                    );
+                    
+                    // Get data URL from cropped canvas
+                    const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.95);
                     
                     // Reset the flag to restore UI
                     skipUI = false;
+                    
+                    console.log("Photo taken and cropped from viewfinder");
+                    console.log("Cropped dimensions:", ktpSrcWidth + "x" + ktpSrcHeight);
                     
                     // Download the image
                     downloadImage(dataUrl, filename);
@@ -660,3 +666,4 @@
     </script>
 </body>
 </html>
+```
