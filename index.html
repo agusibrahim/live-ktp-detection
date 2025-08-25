@@ -252,6 +252,7 @@
         let workerId;
         let lastPredictions = [];
         let ktpDetected = false;
+        let skipUI = false; // Flag to skip UI drawing
         const MODEL_ID = "indonesia-id-card";
         const MODEL_VERSION = "1";
         const MODEL_URL = "https://cdn.jsdelivr.net/gh/agusibrahim/live-ktp-detection@main/assets/models.json";
@@ -351,146 +352,151 @@
                 displayCanvas.width,
                 displayCanvas.height,
             );
-            const scaleX = displayCanvas.width / srcWidth;
-            const scaleY = displayCanvas.height / srcHeight;
-            const ktpCandidates = lastPredictions.filter(
-                (p) => p.class === "ktp",
-            );
-            const faceCandidates = lastPredictions.filter(
-                (p) => p.class === "wajah",
-            );
-            let validKtps = [];
-            ktpCandidates.forEach((ktp) => {
-                const currentRatio = ktp.bbox.width / ktp.bbox.height;
-                const lowerBound =
-                    KTP_ASPECT_RATIO * (1 - ASPECT_RATIO_TOLERANCE);
-                const upperBound =
-                    KTP_ASPECT_RATIO * (1 + ASPECT_RATIO_TOLERANCE);
-                if (currentRatio < lowerBound || currentRatio > upperBound)
-                    return;
-                const ktpMinX = ktp.bbox.x - ktp.bbox.width / 2;
-                const ktpMinY = ktp.bbox.y - ktp.bbox.height / 2;
-                const ktpMaxX = ktp.bbox.x + ktp.bbox.width / 2;
-                const ktpMaxY = ktp.bbox.y + ktp.bbox.height / 2;
-                const hasFaceInside = faceCandidates.some((face) => {
-                    const faceMinX = face.bbox.x - face.bbox.width / 2;
-                    const faceMinY = face.bbox.y - face.bbox.height / 2;
-                    const faceMaxX = face.bbox.x + face.bbox.width / 2;
-                    const faceMaxY = face.bbox.y + face.bbox.height / 2;
-                    return (
-                        faceMinX >= ktpMinX &&
-                        faceMaxX <= ktpMaxX &&
-                        faceMinY >= ktpMinY &&
-                        faceMaxY <= ktpMaxY
-                    );
+            
+            // Only draw UI if skipUI is false
+            if (!skipUI) {
+                const scaleX = displayCanvas.width / srcWidth;
+                const scaleY = displayCanvas.height / srcHeight;
+                const ktpCandidates = lastPredictions.filter(
+                    (p) => p.class === "ktp",
+                );
+                const faceCandidates = lastPredictions.filter(
+                    (p) => p.class === "wajah",
+                );
+                let validKtps = [];
+                ktpCandidates.forEach((ktp) => {
+                    const currentRatio = ktp.bbox.width / ktp.bbox.height;
+                    const lowerBound =
+                        KTP_ASPECT_RATIO * (1 - ASPECT_RATIO_TOLERANCE);
+                    const upperBound =
+                        KTP_ASPECT_RATIO * (1 + ASPECT_RATIO_TOLERANCE);
+                    if (currentRatio < lowerBound || currentRatio > upperBound)
+                        return;
+                    const ktpMinX = ktp.bbox.x - ktp.bbox.width / 2;
+                    const ktpMinY = ktp.bbox.y - ktp.bbox.height / 2;
+                    const ktpMaxX = ktp.bbox.x + ktp.bbox.width / 2;
+                    const ktpMaxY = ktp.bbox.y + ktp.bbox.height / 2;
+                    const hasFaceInside = faceCandidates.some((face) => {
+                        const faceMinX = face.bbox.x - face.bbox.width / 2;
+                        const faceMinY = face.bbox.y - face.bbox.height / 2;
+                        const faceMaxX = face.bbox.x + face.bbox.width / 2;
+                        const faceMaxY = face.bbox.y + face.bbox.height / 2;
+                        return (
+                            faceMinX >= ktpMinX &&
+                            faceMaxX <= ktpMaxX &&
+                            faceMinY >= ktpMinY &&
+                            faceMaxY <= ktpMaxY
+                        );
+                    });
+                    if (hasFaceInside) {
+                        validKtps.push(ktp);
+                    }
                 });
-                if (hasFaceInside) {
-                    validKtps.push(ktp);
+                let focusedKtp = null;
+                if (validKtps.length > 0) {
+                    focusedKtp = validKtps.reduce((prev, current) =>
+                        prev.bbox.width * prev.bbox.height >
+                        current.bbox.width * current.bbox.height
+                            ? prev
+                            : current,
+                    );
                 }
-            });
-            let focusedKtp = null;
-            if (validKtps.length > 0) {
-                focusedKtp = validKtps.reduce((prev, current) =>
-                    prev.bbox.width * prev.bbox.height >
-                    current.bbox.width * current.bbox.height
-                        ? prev
-                        : current,
-                );
-            }
-            
-            // Update instruction text based on detection status
-            if (focusedKtp && !ktpDetected) {
-                ktpDetected = true;
-                instructionsText.textContent = "KTP terdeteksi - Tetap stabil untuk hasil terbaik";
-            } else if (!focusedKtp && ktpDetected) {
-                ktpDetected = false;
-                instructionsText.textContent = "Deteksi otomatis KTP - Tahan kamera stabil";
-            }
-            
-            if (focusedKtp) {
-                const ktpX =
-                    (focusedKtp.bbox.x - focusedKtp.bbox.width / 2 - srcX) *
-                        scaleX -
-                    FOKUS_PADDING;
-                const ktpY =
-                    (focusedKtp.bbox.y -
-                        focusedKtp.bbox.height / 2 -
-                        srcY) *
-                        scaleY -
-                    FOKUS_PADDING;
-                const ktpWidth =
-                    focusedKtp.bbox.width * scaleX + FOKUS_PADDING * 2;
-                const ktpHeight =
-                    focusedKtp.bbox.height * scaleY + FOKUS_PADDING * 2;
-                ctx.save();
-                ctx.beginPath();
-                // Membuat path untuk lubang fokus
-                ctx.roundRect(
-                    ktpX,
-                    ktpY,
-                    ktpWidth,
-                    ktpHeight,
-                    FOKUS_SUDUT_MELENGKUNG,
-                );
-                // Membuat path untuk area luar
-                ctx.rect(
-                    displayCanvas.width,
-                    0,
-                    -displayCanvas.width,
-                    displayCanvas.height,
-                );
-                // Mengisi area gelap di antara dua path
-                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-                ctx.fill("evenodd");
-                ctx.restore();
-                // --- CHECKPOINT 4: Gambar Border di Sekeliling Lubang Fokus ---
-                ctx.beginPath();
-                ctx.roundRect(
-                    ktpX,
-                    ktpY,
-                    ktpWidth,
-                    ktpHeight,
-                    FOKUS_SUDUT_MELENGKUNG,
-                );
-                ctx.strokeStyle = FOKUS_BORDER_WARNA;
-                ctx.lineWidth = FOKUS_BORDER_TEBAL;
-                ctx.stroke();
-            }
-            if (TAMPILKAN_KOTAK_DEBUG) {
-                const font = "16px sans-serif";
-                lastPredictions.forEach((prediction) => {
-                    const drawX =
-                        (prediction.bbox.x -
-                            prediction.bbox.width / 2 -
-                            srcX) *
-                        scaleX;
-                    const drawY =
-                        (prediction.bbox.y -
-                            prediction.bbox.height / 2 -
+                
+                // Update instruction text based on detection status
+                if (focusedKtp && !ktpDetected) {
+                    ktpDetected = true;
+                    instructionsText.textContent = "KTP terdeteksi - Tetap stabil untuk hasil terbaik";
+                } else if (!focusedKtp && ktpDetected) {
+                    ktpDetected = false;
+                    instructionsText.textContent = "Deteksi otomatis KTP - Tahan kamera stabil";
+                }
+                
+                if (focusedKtp) {
+                    const ktpX =
+                        (focusedKtp.bbox.x - focusedKtp.bbox.width / 2 - srcX) *
+                            scaleX -
+                        FOKUS_PADDING;
+                    const ktpY =
+                        (focusedKtp.bbox.y -
+                            focusedKtp.bbox.height / 2 -
                             srcY) *
-                        scaleY;
-                    const drawWidth = prediction.bbox.width * scaleX;
-                    const drawHeight = prediction.bbox.height * scaleY;
-                    ctx.strokeStyle = prediction.color;
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
-                    ctx.fillStyle = prediction.color;
-                    const textWidth = ctx.measureText(
-                        prediction.class,
-                    ).width;
-                    const textHeight = parseInt(font, 10);
-                    ctx.fillRect(
-                        drawX,
-                        drawY,
-                        textWidth + 4,
-                        textHeight + 2,
+                            scaleY -
+                        FOKUS_PADDING;
+                    const ktpWidth =
+                        focusedKtp.bbox.width * scaleX + FOKUS_PADDING * 2;
+                    const ktpHeight =
+                        focusedKtp.bbox.height * scaleY + FOKUS_PADDING * 2;
+                    ctx.save();
+                    ctx.beginPath();
+                    // Membuat path untuk lubang fokus
+                    ctx.roundRect(
+                        ktpX,
+                        ktpY,
+                        ktpWidth,
+                        ktpHeight,
+                        FOKUS_SUDUT_MELENGKUNG,
                     );
-                    ctx.font = font;
-                    ctx.textBaseline = "top";
-                    ctx.fillStyle = "#000000";
-                    ctx.fillText(prediction.class, drawX + 2, drawY);
-                });
+                    // Membuat path untuk area luar
+                    ctx.rect(
+                        displayCanvas.width,
+                        0,
+                        -displayCanvas.width,
+                        displayCanvas.height,
+                    );
+                    // Mengisi area gelap di antara dua path
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                    ctx.fill("evenodd");
+                    ctx.restore();
+                    // --- CHECKPOINT 4: Gambar Border di Sekeliling Lubang Fokus ---
+                    ctx.beginPath();
+                    ctx.roundRect(
+                        ktpX,
+                        ktpY,
+                        ktpWidth,
+                        ktpHeight,
+                        FOKUS_SUDUT_MELENGKUNG,
+                    );
+                    ctx.strokeStyle = FOKUS_BORDER_WARNA;
+                    ctx.lineWidth = FOKUS_BORDER_TEBAL;
+                    ctx.stroke();
+                }
+                if (TAMPILKAN_KOTAK_DEBUG) {
+                    const font = "16px sans-serif";
+                    lastPredictions.forEach((prediction) => {
+                        const drawX =
+                            (prediction.bbox.x -
+                                prediction.bbox.width / 2 -
+                                srcX) *
+                            scaleX;
+                        const drawY =
+                            (prediction.bbox.y -
+                                prediction.bbox.height / 2 -
+                                srcY) *
+                            scaleY;
+                        const drawWidth = prediction.bbox.width * scaleX;
+                        const drawHeight = prediction.bbox.height * scaleY;
+                        ctx.strokeStyle = prediction.color;
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
+                        ctx.fillStyle = prediction.color;
+                        const textWidth = ctx.measureText(
+                            prediction.class,
+                        ).width;
+                        const textHeight = parseInt(font, 10);
+                        ctx.fillRect(
+                            drawX,
+                            drawY,
+                            textWidth + 4,
+                            textHeight + 2,
+                        );
+                        ctx.font = font;
+                        ctx.textBaseline = "top";
+                        ctx.fillStyle = "#000000";
+                        ctx.fillText(prediction.class, drawX + 2, drawY);
+                    });
+                }
             }
+            
             requestAnimationFrame(renderLoop);
         }
         function stopStream() {
@@ -537,65 +543,49 @@
             const filename = generateRandomFilename();
             
             try {
-                // Create a temporary canvas to capture the clean video feed
-                const tempCanvas = document.createElement('canvas');
-                const tempCtx = tempCanvas.getContext('2d');
+                // Set flag to skip UI drawing
+                skipUI = true;
                 
-                // Set the canvas size to match the display canvas
-                tempCanvas.width = displayCanvas.width;
-                tempCanvas.height = displayCanvas.height;
-                
-                // Calculate the visible region of the video (center crop)
-                const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
-                const canvasRatio = tempCanvas.width / tempCanvas.height;
-                let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
-                
-                if (videoRatio > canvasRatio) {
-                    srcWidth = viewfinder.videoHeight * canvasRatio;
-                    srcX = (viewfinder.videoWidth - srcWidth) / 2;
-                } else {
-                    srcHeight = viewfinder.videoWidth / canvasRatio;
-                    srcY = (viewfinder.videoHeight - srcHeight) / 2;
-                }
-                
-                // Draw the clean video frame (without any UI elements)
-                tempCtx.drawImage(
-                    viewfinder,
-                    srcX, srcY, srcWidth, srcHeight,
-                    0, 0, tempCanvas.width, tempCanvas.height
-                );
-                
-                // Get the image data with high quality
-                const dataUrl = displayCanvas.toDataURL('image/jpeg', 0.95);
-                
-                console.log("Photo taken - clean viewfinder capture");
-                console.log("Photo dimensions:", tempCanvas.width + "x" + tempCanvas.height);
-                
-                // Download the image
-                downloadImage(dataUrl, filename);
-                
-                console.log("Photo saved as:", filename);
-                
-                // Flash effect
-                flashOverlay.classList.add("flash");
-                setTimeout(() => flashOverlay.classList.remove("flash"), 300);
-                
-                // Show save notification
-                saveNotification.classList.add("show");
-                setTimeout(() => {
-                    saveNotification.classList.remove("show");
-                }, 3000);
-                
-                // Update instruction text temporarily
-                instructionsText.textContent = "Foto berhasil disimpan!";
-                setTimeout(() => {
-                    instructionsText.textContent = ktpDetected ? 
-                        "KTP terdeteksi - Tetap stabil untuk hasil terbaik" : 
-                        "Deteksi otomatis KTP - Tahan kamera stabil";
-                }, 2000);
+                // Wait for the next frame to render without UI
+                requestAnimationFrame(() => {
+                    // Capture the displayCanvas (now without UI)
+                    const dataUrl = displayCanvas.toDataURL('image/jpeg', 1.0);
+                    
+                    // Reset the flag to restore UI
+                    skipUI = false;
+                    
+                    console.log("Photo taken from displayCanvas");
+                    console.log("Photo dimensions:", displayCanvas.width + "x" + displayCanvas.height);
+                    
+                    // Download the image
+                    downloadImage(dataUrl, filename);
+                    
+                    console.log("Photo saved as:", filename);
+                    
+                    // Flash effect
+                    flashOverlay.classList.add("flash");
+                    setTimeout(() => flashOverlay.classList.remove("flash"), 300);
+                    
+                    // Show save notification
+                    saveNotification.classList.add("show");
+                    setTimeout(() => {
+                        saveNotification.classList.remove("show");
+                    }, 3000);
+                    
+                    // Update instruction text temporarily
+                    instructionsText.textContent = "Foto berhasil disimpan!";
+                    setTimeout(() => {
+                        instructionsText.textContent = ktpDetected ? 
+                            "KTP terdeteksi - Tetap stabil untuk hasil terbaik" : 
+                            "Deteksi otomatis KTP - Tahan kamera stabil";
+                    }, 2000);
+                });
                 
             } catch (error) {
                 console.error("Error taking photo:", error);
+                
+                // Reset the flag in case of error
+                skipUI = false;
                 
                 // Show error notification
                 saveNotification.textContent = "Gagal mengambil foto";
