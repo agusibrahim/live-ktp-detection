@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -584,29 +583,39 @@
                     const scaleX = displayCanvas.width / srcWidth;
                     const scaleY = displayCanvas.height / srcHeight;
                     
-                    // Calculate cropped area based on focusedKtp bbox
-                    const ktpSrcX = focusedKtp.bbox.x - focusedKtp.bbox.width / 2;
-                    const ktpSrcY = focusedKtp.bbox.y - focusedKtp.bbox.height / 2;
-                    const ktpSrcWidth = focusedKtp.bbox.width;
-                    const ktpSrcHeight = focusedKtp.bbox.height;
+                    // Calculate the adjusted coordinates on the display canvas
+                    const ktpX =
+                        (focusedKtp.bbox.x - focusedKtp.bbox.width / 2 - srcX) *
+                            scaleX -
+                        FOKUS_PADDING;
+                    const ktpY =
+                        (focusedKtp.bbox.y -
+                            focusedKtp.bbox.height / 2 -
+                            srcY) *
+                            scaleY -
+                        FOKUS_PADDING;
+                    const ktpWidth =
+                        focusedKtp.bbox.width * scaleX + FOKUS_PADDING * 2;
+                    const ktpHeight =
+                        focusedKtp.bbox.height * scaleY + FOKUS_PADDING * 2;
                     
                     // Create a temporary canvas for cropping
                     const cropCanvas = document.createElement('canvas');
-                    cropCanvas.width = ktpSrcWidth;
-                    cropCanvas.height = ktpSrcHeight;
+                    cropCanvas.width = ktpWidth;
+                    cropCanvas.height = ktpHeight;
                     const cropCtx = cropCanvas.getContext('2d');
                     
-                    // Draw the cropped portion from viewfinder (source video)
+                    // Draw the cropped portion from displayCanvas (which is the visible view without UI)
                     cropCtx.drawImage(
-                        viewfinder,
-                        ktpSrcX,
-                        ktpSrcY,
-                        ktpSrcWidth,
-                        ktpSrcHeight,
+                        displayCanvas,
+                        ktpX,
+                        ktpY,
+                        ktpWidth,
+                        ktpHeight,
                         0,
                         0,
-                        ktpSrcWidth,
-                        ktpSrcHeight
+                        ktpWidth,
+                        ktpHeight
                     );
                     
                     // Get data URL from cropped canvas
@@ -615,8 +624,8 @@
                     // Reset the flag to restore UI
                     skipUI = false;
                     
-                    console.log("Photo taken and cropped from viewfinder");
-                    console.log("Cropped dimensions:", ktpSrcWidth + "x" + ktpSrcHeight);
+                    console.log("Photo taken and cropped from displayCanvas");
+                    console.log("Cropped dimensions:", ktpWidth + "x" + ktpHeight);
                     
                     // Download the image
                     downloadImage(dataUrl, filename);
@@ -666,4 +675,3 @@
     </script>
 </body>
 </html>
-```
