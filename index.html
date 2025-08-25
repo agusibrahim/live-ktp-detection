@@ -252,7 +252,6 @@
         let workerId;
         let lastPredictions = [];
         let ktpDetected = false;
-        let lastFocusedKtp = null;
         const MODEL_ID = "indonesia-id-card";
         const MODEL_VERSION = "1";
         const MODEL_URL = "https://cdn.jsdelivr.net/gh/agusibrahim/live-ktp-detection@main/assets/models.json";
@@ -399,9 +398,6 @@
                 );
             }
             
-            // Store the current focused KTP for photo capture
-            lastFocusedKtp = focusedKtp;
-            
             // Update instruction text based on detection status
             if (focusedKtp && !ktpDetected) {
                 ktpDetected = true;
@@ -539,12 +535,19 @@
         function takePhoto() {
             // Generate a random filename
             const filename = generateRandomFilename();
-            let dataUrl = ""; // Initialize dataUrl
             
             try {
+                // Create a temporary canvas to capture the clean video feed
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                // Set the canvas size to match the display canvas
+                tempCanvas.width = displayCanvas.width;
+                tempCanvas.height = displayCanvas.height;
+                
                 // Calculate the visible region of the video (center crop)
                 const videoRatio = viewfinder.videoWidth / viewfinder.videoHeight;
-                const canvasRatio = displayCanvas.width / displayCanvas.height;
+                const canvasRatio = tempCanvas.width / tempCanvas.height;
                 let srcX = 0, srcY = 0, srcWidth = viewfinder.videoWidth, srcHeight = viewfinder.videoHeight;
                 
                 if (videoRatio > canvasRatio) {
@@ -555,49 +558,18 @@
                     srcY = (viewfinder.videoHeight - srcHeight) / 2;
                 }
                 
-                // Calculate scaling factors
-                const scaleX = displayCanvas.width / srcWidth;
-                const scaleY = displayCanvas.height / srcHeight;
+                // Draw the clean video frame (without any UI elements)
+                tempCtx.drawImage(
+                    viewfinder,
+                    srcX, srcY, srcWidth, srcHeight,
+                    0, 0, tempCanvas.width, tempCanvas.height
+                );
                 
-                if (lastFocusedKtp) {
-                    // Calculate KTP position in display canvas coordinates
-                    const ktpX = (lastFocusedKtp.bbox.x - srcX) * scaleX;
-                    const ktpY = (lastFocusedKtp.bbox.y - srcY) * scaleY;
-                    const ktpWidth = lastFocusedKtp.bbox.width * scaleX;
-                    const ktpHeight = lastFocusedKtp.bbox.height * scaleY;
-                    
-                    // Add padding (20% for better framing)
-                    const padding = 0.2;
-                    const cropX = Math.max(0, ktpX - ktpWidth * padding);
-                    const cropY = Math.max(0, ktpY - ktpHeight * padding);
-                    const cropWidth = Math.min(displayCanvas.width - cropX, ktpWidth * (1 + 2*padding));
-                    const cropHeight = Math.min(displayCanvas.height - cropY, ktpHeight * (1 + 2*padding));
-                    
-                    // Create a canvas for the cropped image
-                    const photoCanvas = document.createElement('canvas');
-                    const photoCtx = photoCanvas.getContext('2d');
-                    photoCanvas.width = cropWidth;
-                    photoCanvas.height = cropHeight;
-                    
-                    // Draw the cropped region from the display canvas
-                    photoCtx.drawImage(
-                        displayCanvas,
-                        cropX, cropY, cropWidth, cropHeight,
-                        0, 0, cropWidth, cropHeight
-                    );
-                    
-                    // Get high quality JPEG
-                    dataUrl = photoCanvas.toDataURL('image/jpeg', 0.95);
-                    
-                    console.log("Photo taken with cropped method");
-                    console.log("Photo dimensions:", photoCanvas.width + "x" + photoCanvas.height);
-                } else {
-                    // If no KTP detected, capture the entire viewfinder
-                    dataUrl = displayCanvas.toDataURL('image/jpeg', 0.95);
-                    
-                    console.log("Full viewfinder photo taken");
-                    console.log("Photo dimensions:", displayCanvas.width + "x" + displayCanvas.height);
-                }
+                // Get the image data with high quality
+                const dataUrl = tempCanvas.toDataURL('image/jpeg', 0.95);
+                
+                console.log("Photo taken - clean viewfinder capture");
+                console.log("Photo dimensions:", tempCanvas.width + "x" + tempCanvas.height);
                 
                 // Download the image
                 downloadImage(dataUrl, filename);
